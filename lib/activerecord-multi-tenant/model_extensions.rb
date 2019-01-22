@@ -65,7 +65,7 @@ module MultiTenant
         partition_key = @partition_key
 
         # Create an implicit belongs_to association only if tenant class exists
-        if MultiTenant.tenant_klass_defined?(tenant_name, options)
+        if MultiTenant.tenant_klass_defined?(tenant_name, options) && !reflections.keys.include?(tenant_name.to_s)
           belongs_to(
             tenant_name,
             **options.slice(:class_name, :inverse_of, :optional),
