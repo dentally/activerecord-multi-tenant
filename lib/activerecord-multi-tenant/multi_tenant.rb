@@ -50,6 +50,14 @@ module MultiTenant
     RequestStore.store[:current_tenant]
   end
 
+  def self.explicit_without=(value)
+    RequestStore.store[:explicit_without] = value
+  end
+
+  def self.explicit_without
+    RequestStore.store[:explicit_without]
+  end
+
   def self.current_tenant_id
     current_tenant_is_id? ? current_tenant : current_tenant.try(:id)
   end
@@ -85,12 +93,14 @@ module MultiTenant
   end
 
   def self.without(&block)
+    self.explicit_without = true
     return block.call if self.current_tenant.nil?
     old_tenant = self.current_tenant
     begin
       self.current_tenant = nil
       return block.call
     ensure
+      self.explicit_without = false
       self.current_tenant = old_tenant
     end
   end

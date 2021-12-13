@@ -9,8 +9,9 @@ module MultiTenant
     def start(name, id, payload); end
     def finish(name, id, payload)
       return unless MultiTenant.query_monitor_enabled?
-      return unless payload[:exception].present? && MultiTenant.current_tenant_id.nil?
-      Rails.logger.info 'WARNING: Tenant not present - make sure to add MultiTenant.with(tenant) { ... }'
+      return unless MultiTenant.current_tenant_id.nil?
+      return if MultiTenant.explicit_without
+      ActiveRecord::Base.logger.warn 'WARNING: Tenant not present - make sure to add MultiTenant.with(tenant) { ... }'
     end
   end
 end

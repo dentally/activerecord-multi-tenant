@@ -1,9 +1,9 @@
 test:
   adapter: postgresql
   username: postgres
-  database: postgres
+  database: multitenant_test
   host: localhost
-  port: 5600
+  port: 5432
   pool: 5
   timeout: 5000
   prepared_statements: <%= ENV.fetch('PREPARED_STATEMENTS', '1') == '1' %>
