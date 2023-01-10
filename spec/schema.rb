@@ -34,6 +34,13 @@ ARGV.grep(/\w+_spec\.rb/).empty? && ActiveRecord::Schema.define(version: 1) do
     t.column :type, :string
   end
 
+  create_table :optional_sub_tasks, force: true do |t|
+    t.references :account, :integer
+    t.column :sub_task_id, :integer
+    t.column :name, :string
+    t.column :type, :string
+  end
+
   create_table :countries, force: true do |t|
     t.column :name, :string
   end
@@ -89,10 +96,26 @@ ARGV.grep(/\w+_spec\.rb/).empty? && ActiveRecord::Schema.define(version: 1) do
     t.column :category_id, :integer
   end
 
-
   create_table :allowed_places, force: true, id: false do |t|
-  t.string :account_id, :integer
-  t.string :name, :string
+    t.string :account_id, :integer
+    t.string :name, :string
+  end
+
+  create_table :domains, force: true, partition_key: :account_id do |t|
+    t.column :account_id, :integer
+    t.column :name, :string
+    t.column :deleted, :boolean, default: false
+  end
+
+  create_table :pages, force: true, partition_key: :account_id do |t|
+    t.column :account_id, :integer
+    t.column :name, :string
+    t.column :domain_id, :integer
+  end
+
+  create_table :posts, force: true, partition_key: :account_id do |t|
+    t.column :account_id, :integer
+    t.column :name, :string
   end
 
   create_distributed_table :accounts, :id
@@ -108,6 +131,9 @@ ARGV.grep(/\w+_spec\.rb/).empty? && ActiveRecord::Schema.define(version: 1) do
   create_distributed_table :uuid_records, :organization_id
   create_distributed_table :project_categories, :account_id
   create_distributed_table :allowed_places, :account_id
+  create_distributed_table :domains, :account_id
+  create_distributed_table :pages, :account_id
+  create_distributed_table :posts, :account_id
   create_reference_table :categories
 end
 
@@ -115,6 +141,7 @@ class Account < ActiveRecord::Base
   multi_tenant :account
   has_many :projects
   has_one :manager, inverse_of: :account
+  has_many :optional_sub_tasks
 end
 
 class Project < ActiveRecord::Base
@@ -146,6 +173,14 @@ class SubTask < ActiveRecord::Base
   multi_tenant :account
   belongs_to :task
   has_one :project, through: :task
+  has_many :optional_sub_tasks
+end
+
+with_belongs_to_required_by_default do
+  class OptionalSubTask < ActiveRecord::Base
+    multi_tenant :account, optional: true
+    belongs_to :sub_task
+  end
 end
 
 class StiSubTask < SubTask
@@ -185,6 +220,7 @@ class Comment < ActiveRecord::Base
 end
 
 class Organization < ActiveRecord::Base
+  multi_tenant :organization
   has_many :uuid_records
 end
 
@@ -204,7 +240,17 @@ class ProjectCategory < ActiveRecord::Base
   belongs_to :account
 end
 
-
 class AllowedPlace < ActiveRecord::Base
   multi_tenant :account
+end
+
+class Domain < ActiveRecord::Base
+  multi_tenant :account
+  has_many :pages
+  default_scope { where(deleted: false) }
+end
+
+class Page < ActiveRecord::Base
+  multi_tenant :account
+  belongs_to :domain
 end

@@ -122,6 +122,8 @@ module MultiTenant
     alias :visit_Arel_Nodes_FullOuterJoin :visit_Arel_Nodes_OuterJoin
     alias :visit_Arel_Nodes_RightOuterJoin :visit_Arel_Nodes_OuterJoin
 
+    alias :visit_ActiveModel_Attribute :terminal
+
     private
 
     def tenant_relation?(table_name)
@@ -274,7 +276,11 @@ module ActiveRecord
                 if node.wheres.empty?
                   node.wheres = [enforcement_clause]
                 else
-                  node.wheres[0] = enforcement_clause.and(node.wheres[0])
+                  if node.wheres[0].is_a?(Arel::Nodes::And)
+                    node.wheres[0].children << enforcement_clause
+                  else
+                    node.wheres[0] = enforcement_clause.and(node.wheres[0])
+                  end
                 end
               else
                 raise "UnknownContext"
@@ -289,12 +295,9 @@ module ActiveRecord
               end
 
               node_list.select{ |n| n.is_a? Arel::Nodes::Join }.each do |node_join|
-                if (!node_join.right ||
-                    (ActiveRecord::VERSION::MAJOR == 5 &&
-                     !node_join.right.expr.right.is_a?(Arel::Attributes::Attribute)))
+                if !node_join.right
                   next
                 end
-
                 relation_right, relation_left = relations_from_node_join(node_join)
 
                 next unless relation_right && relation_left
@@ -302,7 +305,7 @@ module ActiveRecord
                 model_right = MultiTenant.multi_tenant_model_for_table(relation_left.table_name)
                 model_left = MultiTenant.multi_tenant_model_for_table(relation_right.table_name)
                 if model_right && model_left
-                  join_enforcement_clause = MultiTenant::TenantJoinEnforcementClause.new(relation_left[model_left.partition_key], relation_right)
+                  join_enforcement_clause = MultiTenant::TenantJoinEnforcementClause.new(relation_right[model_right.partition_key], relation_left)
                   node_join.right.expr = node_join.right.expr.and(join_enforcement_clause)
                 end
               end
@@ -316,19 +319,20 @@ module ActiveRecord
 
     private
     def relations_from_node_join(node_join)
-      if ActiveRecord::VERSION::MAJOR == 5 || node_join.right.expr.is_a?(Arel::Nodes::Equality)
+      if node_join.right.expr.is_a?(Arel::Nodes::Equality)
         return node_join.right.expr.right.relation, node_join.right.expr.left.relation
       end
 
-      children = node_join.right.expr.children
+      children = [node_join.right.expr.children].flatten
 
-      tenant_applied = children.any?(MultiTenant::TenantEnforcementClause) || children.any?(MultiTenant::TenantJoinEnforcementClause)
+      tenant_applied = children.any?{|c| c.is_a?(MultiTenant::TenantEnforcementClause) || c.is_a?(MultiTenant::TenantJoinEnforcementClause)}
       if tenant_applied || children.empty?
         return nil, nil
       end
 
-      if children[0].right.respond_to?('relation') && children[0].left.respond_to?('relation')
-        return children[0].right.relation, children[0].left.relation
+      child = children.first.respond_to?(:children) ? children.first.children.first : children.first
+      if child.right.respond_to?(:relation) && child.left.respond_to?(:relation)
+        return child.right.relation, child.left.relation
       end
 
       return nil, nil

@@ -1,6 +1,10 @@
-require 'request_store'
+require 'active_support/current_attributes'
 
 module MultiTenant
+  class Current < ::ActiveSupport::CurrentAttributes
+    attribute :tenant
+  end
+
   def self.tenant_klass_defined?(tenant_name)
     !!tenant_name.to_s.classify.safe_constantize
   end
@@ -24,13 +28,23 @@ module MultiTenant
   def self.with_lock_workaround_enabled?; @@enable_with_lock_workaround; end
 
   # Registry that maps table names to models (used by the query rewriter)
-  def self.register_multi_tenant_model(table_name, model_klass)
-    @@multi_tenant_models ||= {}
-    @@multi_tenant_models[table_name.to_s] = model_klass
+  def self.register_multi_tenant_model(model_klass)
+    @@multi_tenant_models ||= []
+    @@multi_tenant_models.push(model_klass)
+
+    remove_class_variable(:@@multi_tenant_model_table_names) if defined?(@@multi_tenant_model_table_names)
   end
+
   def self.multi_tenant_model_for_table(table_name)
-    @@multi_tenant_models ||= {}
-    @@multi_tenant_models[table_name.to_s]
+    @@multi_tenant_models ||= []
+
+    if !defined?(@@multi_tenant_model_table_names)
+      @@multi_tenant_model_table_names = @@multi_tenant_models.map { |model|
+        [model.table_name, model] if model.table_name
+      }.compact.to_h
+    end
+
+    @@multi_tenant_model_table_names[table_name.to_s]
   end
 
   def self.multi_tenant_model_for_arel(arel)
@@ -43,11 +57,11 @@ module MultiTenant
   end
 
   def self.current_tenant=(tenant)
-    RequestStore.store[:current_tenant] = tenant
+    Current.tenant = tenant
   end
 
   def self.current_tenant
-    RequestStore.store[:current_tenant]
+    Current.tenant
   end
 
   def self.current_tenant_id
@@ -92,6 +106,41 @@ module MultiTenant
       return block.call
     ensure
       self.current_tenant = old_tenant
+    end
+  end
+
+  # Wrap calls to any of `method_names` on an instance Class `klass` with MultiTenant.with when `'owner'` (evaluated in context of the klass instance) is a ActiveRecord model instance that is multi-tenant
+  if Gem::Version.create(RUBY_VERSION) < Gem::Version.new('3.0.0')
+    def self.wrap_methods(klass, owner, *method_names)
+      method_names.each do |method_name|
+        original_method_name = :"_mt_original_#{method_name}"
+        klass.class_eval <<-CODE, __FILE__, __LINE__ + 1
+          alias_method :#{original_method_name}, :#{method_name}
+          def #{method_name}(*args, &block)
+            if MultiTenant.multi_tenant_model_for_table(#{owner}.class.table_name).present? && #{owner}.persisted? && MultiTenant.current_tenant_id.nil? && #{owner}.class.respond_to?(:partition_key) && #{owner}.attributes.include?(#{owner}.class.partition_key)
+              MultiTenant.with(#{owner}.public_send(#{owner}.class.partition_key)) { #{original_method_name}(*args, &block) }
+            else
+              #{original_method_name}(*args, &block)
+            end
+          end
+        CODE
+      end
+    end
+  else
+    def self.wrap_methods(klass, owner, *method_names)
+      method_names.each do |method_name|
+        original_method_name = :"_mt_original_#{method_name}"
+        klass.class_eval <<-CODE, __FILE__, __LINE__ + 1
+        alias_method :#{original_method_name}, :#{method_name}
+        def #{method_name}(...)
+          if MultiTenant.multi_tenant_model_for_table(#{owner}.class.table_name).present? && #{owner}.persisted? && MultiTenant.current_tenant_id.nil? && #{owner}.class.respond_to?(:partition_key) && #{owner}.attributes.include?(#{owner}.class.partition_key)
+            MultiTenant.with(#{owner}.public_send(#{owner}.class.partition_key)) { #{original_method_name}(...) }
+          else
+            #{original_method_name}(...)
+          end
+        end
+        CODE
+      end
     end
   end
 
