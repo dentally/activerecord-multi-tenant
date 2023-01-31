@@ -160,3 +160,4 @@ class ActiveRecord::Associations::Association
     skip_statement_cache_orig(*scope)
   end
 end
+
