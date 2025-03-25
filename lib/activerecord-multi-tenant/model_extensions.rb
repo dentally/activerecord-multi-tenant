@@ -42,20 +42,15 @@ module MultiTenant
                                         .try(:instance_variable_get, :@partition_key)
           end
 
-          # Avoid primary_key errors when using composite primary keys (e.g. id, tenant_id)
-          def primary_key
-            if defined?(PRIMARY_KEY_NOT_SET) ? !PRIMARY_KEY_NOT_SET.equal?(@primary_key) : @primary_key
-              return @primary_key
-            end
-
+          def reset_primary_key
             primary_object_keys = Array.wrap(connection.schema_cache.primary_keys(table_name)) - [partition_key]
 
-            @primary_key = if primary_object_keys.size == 1
-                             primary_object_keys.first
-                           elsif table_name &&
-                                 connection.schema_cache.columns_hash(table_name).include?(DEFAULT_ID_FIELD)
-                             DEFAULT_ID_FIELD
-                           end
+            self.primary_key = if primary_object_keys.size == 1
+                                 primary_object_keys.first
+                               elsif table_name &&
+                                     connection.schema_cache.columns_hash(table_name).include?(DEFAULT_ID_FIELD)
+                                 DEFAULT_ID_FIELD
+                               end
           end
 
           def inherited(subclass)
@@ -71,8 +66,11 @@ module MultiTenant
 
         # Create an implicit belongs_to association only if tenant class exists
         if MultiTenant.tenant_klass_defined?(tenant_name, options)
-          belongs_to tenant_name, **options.slice(:class_name, :inverse_of, :optional)
-                                           .merge(foreign_key: options[:partition_key])
+          belongs_to(
+            tenant_name,
+            **options.slice(:class_name, :inverse_of, :optional),
+            foreign_key: options[:partition_key]
+          )
         end
 
         # New instances should have the tenant set
@@ -202,7 +200,7 @@ module MultiTenant
         return true if through_klass.respond_to?(:scoped_by_tenant?) && through_klass.scoped_by_tenant?
       end
 
-      super(*scope)
+      super
     end
   end
 end

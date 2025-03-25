@@ -21,7 +21,7 @@ module Arel
 
       stmt = Arel::UpdateManager.new
       stmt.table(table)
-      stmt.set Arel.sql(@klass.send(:sanitize_sql_for_assignment, updates))
+      stmt.set Arel.sql(klass.send(:sanitize_sql_for_assignment, updates))
       stmt.wheres = [generate_in_condition_subquery]
 
       klass.connection.update(stmt, "#{klass} Update All").tap { reset }
@@ -37,7 +37,14 @@ module Arel
       tenant_id = MultiTenant.current_tenant_id
 
       # Build an Arel query
-      arel = eager_loading? ? apply_join_dependency.arel : build_arel
+      arel = if eager_loading?
+               apply_join_dependency.arel
+             elsif ActiveRecord.gem_version >= Gem::Version.create('7.2.0')
+               build_arel(klass.connection)
+             else
+               build_arel
+             end
+
       arel.source.left = table
 
       # If the tenant ID is present and the tenant key is a column in the model,
